@@ -1,72 +1,83 @@
 // import user model
 const { User, Book } = require("../models");
 // import sign token function from auth
-const { signToken } = require("../utils/auth");
+const { signToken, AuthenticationError } = require("../utils/auth");
 
 const resolvers = {
   // All Get Requests
   Query: {
-    user: async (parent, { userID }) => {
-      return User.findOne({ _id: userID });
+    me: async (parent, args, context) => {
+      if (context.user) {
+        const userData = await User.findOne({ _id: context.user._id })
+          .select("-__v -password")
+          .populate("savedBooks");
+        return userData;
+      }
+      throw AuthenticationError;
     },
   },
   // Any manipulation of data
   Mutation: {
-    createUser: async (parent, { username, email, password }) => {
-      return User.create({ username, email, password });
+    createUser: async (parent, args) => {
+      const user = await User.create(args);
+      const token = signToken(user);
+      return { user, token };
     },
-    saveBook: async (parent, { Book }) => {
-      return User.findOneAndUpdate(
-        { _id: Book },
-        {
-          $addToSet: { savedBook: bookId },
+    saveBook: async (parent, { bookdata }, context) => {
+      console.log(bookdata);
+      if (context.user._id) {
+        const user = await User.findOneAndUpdate(
+          { _id: context.user._id },
+          {
+            $push: { savedBooks: bookdata },
+          },
+          {
+            new: true,
+            runValidators: true,
+          }
+        );
+        return user;
+      }
+      throw AuthenticationError;
+    },
+    deleteBook: async (parent, { bookID }, context) => {
+      if (context.user) {
+        const user = await User.findByIdAndUpdate(
+          { _id: context.user._id },
+          {
+            $pull: { savedBooks: bookID },
+          },
+          {
+            new: true,
+            runValidators: true,
+          }
+        );
+        return user;
+      }
+      throw AuthenticationError;
+    },
+    login: async (parent, { email, password }) => {
+      try {
+        const user = await User.findOne({ email: email });
+
+        if (!user) {
+          throw new AuthenticationError("Incorrect credentials");
         }
-      );
+
+        const key = await user.isCorrectPassword(password);
+
+        if (!key) {
+          throw new AuthenticationError("Incorrect credentials");
+        }
+        const token = signToken(user);
+        console.log(token);
+        return { user, token };
+      } catch (error) {
+        console.log(error);
+        throw new AuthenticationError("Something went wrong");
+      }
     },
   },
 };
-// ----------Resume Work HERE!------ Last Left: *Go to Next Comment*
-//   async saveBook({ user, body }, res) {
-//     console.log(user);
-//     try {
-//       // --------Not
-//       const updatedUser = await User.findOneAndUpdate(
-//         // Not sure
-//         { _id: user._id },
-//         { $addToSet: { savedBooks: body } },
-//         { new: true, runValidators: true }
-//       );
-//       return res.json(updatedUser);
-//     } catch (err) {
-//       console.log(err);
-//       return res.status(400).json(err);
-//     }
-//   },
-//   // remove a book from `savedBooks`
-//   async deleteBook({ user, params }, res) {
-//     const updatedUser = await User.findOneAndUpdate(
-//       { _id: user._id },
-//       { $pull: { savedBooks: { bookId: params.bookId } } },
-//       { new: true }
-//     );
-//     if (!updatedUser) {
-//       return res.status(404).json({ message: "Couldn't find user with this id!" });
-//     }
-//     return res.json(updatedUser);
-//   },
-// };
 
-// async login({ body }, res) {
-//   const user = await User.findOne({ $or: [{ username: body.username }, { email: body.email }] });
-//   if (!user) {
-//     return res.status(400).json({ message: "Can't find this user" });
-//   }
-
-//   const correctPw = await user.isCorrectPassword(body.password);
-
-//   if (!correctPw) {
-//     return res.status(400).json({ message: 'Wrong password!' });
-//   }
-//   const token = signToken(user);
-//   res.json({ token, user });
-// }
+module.exports = resolvers;
